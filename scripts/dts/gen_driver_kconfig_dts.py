@@ -56,28 +56,100 @@ def parse_args():
     return parser.parse_args()
 
 
+def compatible_from_yaml_file(stream) -> str | None:
+    """Extract the top-level ``compatible`` value from a devicetree binding.
+
+    This scans the YAML event stream and returns the scalar value associated
+    with the first top-level ``compatible`` key. It avoids constructing the
+    full YAML document for performance, and ignores nested mappings and
+    sequences.
+
+    A new PyYAML loader is created from ``stream`` and is always disposed
+    before this function returns.
+
+    :param stream: YAML input stream
+    :returns: The compatible value if found, otherwise ``None``.
+    """
+    loader = SafeLoader(stream)
+    mapping_depth = 0
+    expecting_key = False
+    pending_compat = False
+    skip = 0
+
+    try:
+        while loader.check_event():
+            event = loader.get_event()
+            event_type = event.__class__
+
+            if event_type is yaml.events.MappingStartEvent:
+                mapping_depth += 1
+                if skip:
+                    skip += 1
+                elif mapping_depth == 1:
+                    expecting_key = True
+                elif mapping_depth == 2 and not expecting_key:
+                    pending_compat = False
+                    skip = 1
+                continue
+
+            if event_type is yaml.events.MappingEndEvent:
+                if skip:
+                    skip -= 1
+                mapping_depth -= 1
+                if mapping_depth == 1 and skip == 0:
+                    expecting_key = True
+                continue
+
+            if event_type is yaml.events.SequenceStartEvent:
+                if skip:
+                    skip += 1
+                elif mapping_depth == 1 and not expecting_key:
+                    pending_compat = False
+                    skip = 1
+                continue
+
+            if event_type is yaml.events.SequenceEndEvent:
+                if skip:
+                    skip -= 1
+                if mapping_depth == 1 and skip == 0:
+                    expecting_key = True
+                continue
+
+            if skip or mapping_depth != 1:
+                continue
+
+            if event_type is yaml.events.ScalarEvent:
+                value = event.value
+                if expecting_key:
+                    pending_compat = value == "compatible"
+                    expecting_key = False
+                else:
+                    if pending_compat:
+                        return value
+                    pending_compat = False
+                    expecting_key = True
+    finally:
+        loader.dispose()
+
+    return None
+
 def main():
     args = parse_args()
 
+    compat = None
     compats = set()
 
     for binding_path in binding_paths(args.bindings_dirs):
-        with open(binding_path, encoding="utf-8") as f:
+        with open(binding_path, "rb") as f:
             try:
-                # Parsed PyYAML representation graph. For our purpose,
-                # we don't need the whole file converted into a dict.
-                root = yaml.compose(f, Loader=SafeLoader)
+                compat = compatible_from_yaml_file(f)
             except yaml.YAMLError as e:
                 print(f"WARNING: '{binding_path}' appears in binding "
                       f"directories but isn't valid YAML: {e}")
                 continue
 
-        if not isinstance(root, yaml.MappingNode):
-            continue
-        for key, node in root.value:
-            if key.value == "compatible" and isinstance(node, yaml.ScalarNode):
-                compats.add(node.value)
-                break
+        if compat is not None:
+            compats.add(compat)
 
     with open(args.kconfig_out, "w", encoding="utf-8") as kconfig_file:
         print(HEADER, file=kconfig_file)
