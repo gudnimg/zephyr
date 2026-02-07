@@ -124,9 +124,9 @@ When configuring your project you see an error that looks similar to:
   Error message: Traceback (most recent call last):
 
     File "/path/to/zephyr/scripts/list_boards.py", line 11, in <module>
-      import pykwalify.core
+      import <some_module>
 
-  ModuleNotFoundError: No module named 'pykwalify'
+  ModuleNotFoundError: No module named '<some_module>'
 
 
 This means that you did not start the IDE in a Zephyr environment.  You must
