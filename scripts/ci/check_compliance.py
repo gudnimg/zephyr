@@ -394,6 +394,51 @@ class BoardYmlCheck(ComplianceTest):
             self.check_board_file(file, vendor_prefixes)
 
 
+class ShieldYmlCheck(ComplianceTest):
+    """
+    Validate shield.yml files when shield-related files change.
+    """
+
+    name = "ShieldYml"
+    doc = "Check the shield.yml file format"
+
+    @staticmethod
+    def _is_shield_related(path: str) -> bool:
+        return (
+            "/boards/shields/" in f"/{path}"
+            or path.endswith("/shield.yml")
+            or path == "scripts/list_shields.py"
+            or path == "scripts/schemas/shield-schema.yml"
+        )
+
+    def run(self):
+        changed = get_files(filter="d")
+        shield_related = [p for p in changed if self._is_shield_related(p)]
+        if not shield_related:
+            self.skip("No shield-related files changed")
+
+        # Validate all shields for impacted board roots, not only changed files.
+        # This catches malformed shield.yml and schema/parser regressions.
+        board_roots = {str(ZEPHYR_BASE)}
+        for rel_path in shield_related:
+            abs_path = (GIT_TOP / rel_path).resolve()
+            parts = list(abs_path.parts)
+            if "boards" in parts and "shields" in parts:
+                idx = parts.index("boards")
+                if idx > 0:
+                    board_roots.add(str(Path(*parts[:idx])))
+
+        cmd = [sys.executable, str(ZEPHYR_BASE / "scripts" / "list_shields.py")]
+        for root in sorted(board_roots):
+            cmd.append(f"--board-root={root}")
+        cmd.append("--json")
+
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as ex:
+            self.failure(ex.stderr.decode("utf-8") or "Shield YAML validation failed")
+
+
 class ClangFormatCheck(ComplianceTest):
     """
     Check if clang-format reports any issues
