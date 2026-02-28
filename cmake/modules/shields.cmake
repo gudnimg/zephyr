@@ -15,6 +15,7 @@
 # - shield_dts_files : List of shield-specific devicetree files
 # - SHIELD_AS_LIST   : A CMake list of shields created from the SHIELD variable.
 # - SHIELD_DIRS      : A CMake list of directories which contain shield definitions
+# Note: The variables above are only populated when SHIELD is defined.
 #
 # The following targets will be defined when this CMake module completes:
 # - shields: when invoked, a list of valid shields will be printed
@@ -33,6 +34,22 @@ include_guard(GLOBAL)
 include(extensions)
 include(python)
 
+# Prepare list shields command.
+# This command is used for locating the shield dir as well as printing all shields
+# in the system in the following cases:
+# - User specifies an invalid SHIELD
+# - User invokes '<build-command> shields' target
+list(TRANSFORM BOARD_ROOT PREPEND "--board-root=" OUTPUT_VARIABLE board_root_args)
+set(list_shields_commands
+  COMMAND ${PYTHON_EXECUTABLE} ${ZEPHYR_BASE}/scripts/list_shields.py
+  ${board_root_args}
+)
+
+add_custom_target(shields
+  ${list_shields_commands}
+  USES_TERMINAL
+)
+
 # Check that SHIELD has not changed.
 zephyr_check_cache(SHIELD WATCH)
 
@@ -48,20 +65,8 @@ string(REPLACE " " ";" SHIELD_AS_LIST "${SHIELD}")
 # After processing all shields, only invalid shields will be left in this list.
 set(SHIELD-NOTFOUND ${SHIELD_AS_LIST})
 
-# Prepare list shields command.
-# This command is used for locating the shield dir as well as printing all shields
-# in the system in the following cases:
-# - User specifies an invalid SHIELD
-# - User invokes '<build-command> shields' target
-list(TRANSFORM BOARD_ROOT PREPEND "--board-root=" OUTPUT_VARIABLE board_root_args)
-
-set(list_shields_commands
-  COMMAND ${PYTHON_EXECUTABLE} ${ZEPHYR_BASE}/scripts/list_shields.py
-  ${board_root_args} --json
-)
-
 # Get list of shields in JSON format
-execute_process(${list_shields_commands}
+execute_process(${list_shields_commands} --json
   OUTPUT_VARIABLE shields_json
   ERROR_VARIABLE err_shields
   RESULT_VARIABLE ret_val
@@ -146,11 +151,3 @@ if(NOT (SHIELD-NOTFOUND STREQUAL ""))
   unset(CACHED_SHIELD CACHE)
   message(FATAL_ERROR "Invalid SHIELD; see above.")
 endif()
-
-# Prepend each shield with COMMAND <cmake> -E echo <shield>" for printing.
-# Each shield is printed as new command because build files are not fond of newlines.
-list(TRANSFORM SHIELD_LIST PREPEND "COMMAND;${CMAKE_COMMAND};-E;echo;"
-     OUTPUT_VARIABLE shields_target_cmd
-)
-
-add_custom_target(shields ${shields_target_cmd} USES_TERMINAL)
